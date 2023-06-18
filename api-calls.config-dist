@@ -1,0 +1,70 @@
+############################################################################
+###### API-USER & Cloud-URL ################################################
+############################################################################
+NCUSER=talkmaster
+NCTOKEN="YOURT-OPSEC-RETAP-PTOKE-NN8Ra"
+NCURL="https://your.nextclo.ud"
+## wenn die Nextcloud nicht im Docker auf diesem Host
+## läuft, muss NC_IN_CONTAINER=no gesetzt und der OCC-Befehl
+## angepasst werden. Ansonsten
+NC_IN_CONTAINER="yes"
+NC_CONTAINER="deinNCcontainer"
+OCC="docker exec --user www-data ${NC_CONTAINER} php occ"
+#OCC="sudo -u www-data /usr/bin/php /var/www/html/nextcloud/occ"
+
+## Nextcloud-Gruppe, die alle teachers enthält.
+## default: NCTEACHERSGROUPID=teachers
+# NCTEACHERSGROUPID=teachers_2
+#################################################################
+
+
+
+
+
+
+
+
+
+############################################################################
+###### LDAP/AD #############################################################
+############################################################################
+LDAP_SERVER='ldaps://server.linuxmuster.lan'
+LDAP_BASEDN='OU=SCHOOLS,dc=linuxmuster,dc=lan'
+LDAP_BDUSER='CN=global-binduser,OU=Management,OU=GLOBAL,DC=linuxmuster,DC=lan'
+LDAP_BDPASS='sTreNGgeHeimesBinDUserPASSwort'
+
+############################################################################
+###### MYSQL ###############################################################
+############################################################################
+MYSQL_DB="nextcloud"
+MYSQL_USER="root"
+MYSQL_DBPASS='hoffentlichSehrsicheresPassW0r7'
+# läuft mysql in einem Docker-Container auf diesem Host?
+MYSQL_IN_CONTAINER="yes"
+# wenn ja in welchem?
+MYSQL_CONTAINER="claudi_db"
+#
+DOCKER_EXEC="/usr/bin/docker exec -i ${MYSQL_CONTAINER}"
+# wenn mysql NICHT im Docker-Container läuft. muss dieser Aufruf angepasst 
+# werden, dass die Datenbank erreicht wird.
+MYSQL="/usr/bin/mysql -U $MYSQL_DB -u$MYSQL_USER -p$MYSQL_DBPASS"
+
+
+############################################################################
+###### Definitionen der Räume ##############################################
+############################################################################
+
+## Datei, die von Hand gepflegt wird mit anzulegenden Gruppen
+GRUPPENDATEI="./linuxmuster-nctalk-gruppen.config"
+
+## Datei, die automatisch aus den Fachschaftsprojektgruppen erzeugt wird
+FS_OUTPUTFILE="./linuxmuster-nctalk-fachschaften.config"
+
+## Filter für Projekte, die mit fs beginnen aber keine Fachschaften sind
+## getrennt mit Pipe (|), wird so wie es ist an grep übergeben.
+EXCLUDE_PROJECTS="filter:|fsonderbar|weiterefilterhiereingeben"
+
+
+## Für den unwahrscheinlichen Fall, dass man Fehler suchen muss ;)
+## default: DEBUG=0
+# DEBUG=1

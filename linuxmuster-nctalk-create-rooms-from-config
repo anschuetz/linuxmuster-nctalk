@@ -1,0 +1,88 @@
+#!/bin/bash
+
+# Skript wird mit Parameter "update" oder "skipfs" aufgerufen
+# um einen Durchlauf ohne die aufwändigen Fachschaften zu 
+# ermöglichen
+source api-calls.config
+SKRIPTPATH="$(dirname $(realpath "$0"))"
+debugmsg() {
+	[ $DEBUG = 0 ] && return 0
+	if [ $DEBUG = 2 ] ; then echo -n "."  ; return 0 ; fi  
+	if [ -n "$BASH_VERSION" ]; then
+		FUNCTIONSTACK="${FUNCNAME[1]}"
+	elif [ -n "$ZSH_VERSION" ]; then
+		FUNCTIONSTACK="${funcstack[2]}"
+	else
+		FUNCTIONSTACK="Unbekannt"
+	fi
+
+	DATUM=$(date '+%Y-%m-%d %H:%M:%S')
+	TEXTLENGTH=${#FUNCTIONSTACK}
+	if [ ${TEXTLENGTH} -lt 10 ] ; then
+		TAB="\t\t"
+	else
+		TAB="\t"
+	fi
+	echo -e "$DATUM: $FUNCTIONSTACK $TAB $@"  >&2
+}
+debugmsg Debugging ist eingeschaltet
+debugmsg $SKRIPTPATH
+
+
+
+createFachschaften() {
+	#### FACHSCHAFTS-RÄUME erzeugen
+	debugmsg "Erzeuge Fachschaften - Start"
+	for ZEILE in $(cat $FS_OUTPUTFILE | grep -v "#") 
+	do 
+		[[ "x$ACTION" == "xskipfs" ]] && continue
+		ROOM="$(echo $ZEILE | cut -d";" -f1)" 
+		TYP=$(echo $ZEILE | cut -d";" -f2)
+		MEMBERGROUP=$(echo $ZEILE | cut -d";" -f3)
+		ADMINLIST=$(echo $ZEILE | cut -d";" -f4)
+		[[ "x$ADMINLIST" == "x" ]] && ADMINLIST=none 
+		debugmsg "| Versuche: $ACTION $ROOM"
+		${SKRIPTPATH}/linuxmuster-nctalk-manage-chatroom -a create -n "$ROOM" -m $MEMBERGROUP -t $TYP -c $ADMINLIST
+	done
+	debugmsg "Erzeuge Fachschaften - ENDE"
+}
+
+zeigeAuskommentierte() {
+	####  Sonstige Gruppenräume
+	for ZEILE in $(cat $GRUPPENDATEI | grep "#") 
+	do 
+		debugmsg "Überspringe auskommentierte Zeile: $ZEILE"
+		continue
+	done
+}
+
+createGruppenchats() {
+	debugmsg "Erzeuge Gruppenchats - START"
+	for ZEILE in $(cat $GRUPPENDATEI | grep -v "#" | sed 's/ /_/g') 
+	do
+		debugmsg "verarbeite Zeile: $ZEILE"
+		ROOM="$(echo $ZEILE | cut -d";" -f1)" 
+		TYP=$(echo $ZEILE | cut -d";" -f2)
+		MEMBERGROUP=$(echo $ZEILE | cut -d";" -f3)
+		ADMINLIST=$(echo $ZEILE | cut -d";" -f4)
+		debugmsg "Raum: $ROOM, Typ: $TYP, Gruppe: $MEMBERGROUP, Admins: $ADMINLIST"
+		[[ "x$ADMINLIST" == "x" ]] && ADMINLIST=none 
+		${SKRIPTPATH}/linuxmuster-nctalk-manage-chatroom -a create -n "$ROOM" -m $MEMBERGROUP -t $TYP -c $ADMINLIST
+	done
+	debugmsg "Erzeuge Gruppenchats - ENDE"
+}
+
+
+debugmsg "Starte TALK-Gruppenerzeugung $0 am $(date) "
+
+if [[ "x$1" == "xskipfs" ]] ; then
+	ACTION="skipfs" 
+       	debugmsg "Skipping FS-Räume"
+else
+	createFachschaften
+fi
+
+[[ "x$DEBUG" == "1" ]] && zeigeAuskommentierte
+
+createGruppenchats
+

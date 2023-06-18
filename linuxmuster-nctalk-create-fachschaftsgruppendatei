@@ -1,0 +1,66 @@
+#!/bin/bash
+################################################################################
+#linuxmuster-nctalk-create-fachschaftsgruppendatei
+# Jesko Anschütz jesko@linuxmuster.net Juni 2023
+#
+# Skript fragt AD nach Projekten ab, die mit p_fs beginnen und erzeugt
+# daraus eine Steuerdatei für das Skript "linuxmuster-nctalk-create-rooms-from-config"
+# 
+# 
+# falls irgendwelche Projekte, die keine Fachschaft sind blöderweise auch noch mit fs beginnen 
+# z.B. p_fsonderbar, dann hier ergänzen (p_ kann weggelassen werden):
+
+DONTSHOW="filter:|fsonderbar|weiterefilterhiereingeben"
+
+
+################################################################################
+
+
+source ./api-calls.config
+
+getFachschaften() {
+	# Fachschaften sind Projekte, die mit fs beginnen --> Filter p_fs*
+	ldapfilter="(&(objectClass=group)(!(sophomorixAdminClass=attic))(|(samaccountname=p_fs*)))"
+
+	/usr/bin/ldapsearch -x -H $LDAP_SERVER  \
+			'-b' $LDAP_BASEDN \
+			'-D' $LDAP_BDUSER \
+			'-w' $LDAP_BDPASS ${ldapfilter} \
+			| grep -i samaccountname | cut -d" " -f2 | egrep -v -e "$DONTSHOW" | sort 
+}
+
+writeFileHeader() {
+	echo "# nicht von Hand bearbeiten! wird von $0 erzeugt"
+	echo "# RAUMNAME;TYP;ADGROUP" 
+	echo "# RAUMNAME: So heißt der Raum in NC-Talk" 
+	echo "# TYP: 'lehrer', 'schueler' oder 'alle': Welche Nutzertypen aus der AD-Gruppe in den Raum übernommen werden. Hilft z.B. Klassengruppen OHNE alle eingeschriebenen Lehrer zu erstellen."
+	echo "# ADGROUP: Die Gruppe, die nach 'Typfilterung' in den Chatraum eingeschrieben wird."
+}
+
+writeFileContent() {
+	for FACHSCHAFT in $(getFachschaften)
+	do
+	  # erstmal unnötige Info weg: p_fs will keiner sehen...
+	  FS=$(echo $FACHSCHAFT | sed -e 's/p_fs//g')
+	  # Grundsätzlich wird vom Fachnamen nur der erste Buchstabe groß geschrieben.
+	  # die Ausnahmen stehen hier...
+	  case $FS in
+		"aes") FS="AES"  ;;
+		"bk") FS="BK" ;;
+		"gk") FS="GK" ;;
+		"it") FS="IT" ;;
+		"wbs") FS="WBS" ;;
+		*) FS=${FS^} ;;
+	  esac
+	  # jetzt noch FS- vor das Fach setzen
+	  NAME="FS-${FS}"
+	  # und die Zeile in die Datei schreiben. Falls irgendjemand aus Versehen User aus der Gruppe Students eingetragen hat,
+	  # kein Problem, es werden vom nächsten Skript dann nur lehrer hinzugefügt.
+	  echo "$NAME;lehrer;$FACHSCHAFT" 
+	done
+}
+
+
+writeFileHeader   #>> $FS_OUTPUTFILE
+writeFileContent  #>> $FS_OUTPUTFILE
+

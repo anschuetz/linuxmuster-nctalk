@@ -1,0 +1,596 @@
+#!/bin/bash
+
+################### API-USER & Cloud-URL ############
+DEBUG=""
+source ./api-calls.config
+#####################################################
+
+# Commands:
+DOCKER="/usr/bin/docker"
+CURL="/usr/bin/curl"
+TEACHERS="leer"
+[ -z "$DEBUG" ] && DEBUG=0
+[ -z "$NCTEACHERSGROUPID" ] && NCTEACHERSGROUPID=teachers
+debugmsg() {
+	[ $DEBUG = 0 ] && return 0
+	if [ $DEBUG = 2 ] ; then echo -n "." ; return 0 ; fi
+	
+	if [ -n "$BASH_VERSION" ]; then
+		FUNCTIONSTACK="${FUNCNAME[1]}"
+	elif [ -n "$ZSH_VERSION" ]; then
+		FUNCTIONSTACK="${funcstack[2]}"
+	else
+		FUNCTIONSTACK="Unbekannt"
+	fi
+
+	DATUM=$(date '+%Y-%m-%d %H:%M:%S')
+	TEXTLENGTH=${#FUNCTIONSTACK}
+	if [ ${TEXTLENGTH} -lt 10 ] ; then 
+		TAB="\t\t" 
+	else 
+		TAB="\t" 
+	fi
+	echo -e "$DATUM: $FUNCTIONSTACK $TAB $@"  >&2
+}
+debugmsg Debugging ist eingeschaltet
+
+userExists() {
+	debugmsg start
+	# User muss angegeben werden, um zu prüfen, ob es ihn gibt:
+	if [[ "x$1" == "x" ]] ; then debugmsg "userExists <Username>  | userDoesntExist <Username>" ; exit 1 ; fi
+
+	APICALL="${NCURL}/ocs/v1.php/cloud/users/$1"
+	METHOD=GET
+	RESPONSE=$($CURL -s -u "$NCUSER":"$NCTOKEN" -X "$METHOD" "${APICALL}" \
+	      	   -H "OCS-APIRequest: true" \
+	      	   -H "Content-Type: application/json" \
+	      	   -H "Accept: application/json")
+	if echo ${RESPONSE}|tr -d '\n\t\r' | jq '.ocs.data.id' >/dev/null 2>&1  
+	then
+	        debugmsg end
+	        return 0 
+	else
+	        debugmsg end
+	        return 1
+	fi
+}
+
+userIsTeacher() {
+	debugmsg "start Prüfung ob $1 Lehrer ist"
+	userToTest=$1
+	# Lehrerliste nur einmal füllen... etwas umständlich, damit es in zsh und bash funktioniert
+	if [[ "$TEACHERS" == "leer" || "$xTEACHERS" == "x" ]] ; then 
+		 IFS=$'\n' teachers=($(getGroupMembers $NCTEACHERSGROUPID))
+		 export TEACHERS="${teachers[*]}"
+		 debugmsg "TEACHERS musste erst noch ermittelt werden"
+	else
+		 debugmsg "TEACHERS wurde schon ermittelt"
+	fi
+
+	if [[ $TEACHERS =~ (^|[[:space:]])$userToTest($|[[:space:]]) ]] ; then
+		 debugmsg "$userToTest ist Lehrer."
+		 return 0
+	else
+		 debugmsg "$userToTest ist KEIN Lehrer."
+		 return 1
+	fi
+}
+
+userDoesntExist() { # Code liest sich leichter wenn if userDoesntExist da steht statt if ! userExists...
+	userExists $1 && return 1 || return 0
+}
+
+getRoomToken() {
+	debugmsg start
+	# via SQL-Abfrage der Nextcloud-DB, weil nicht möglich über die API
+	# Raumname muss angegeben werden, sonst abbruch
+	if [[ "x$1" == "x" ]] ; then debugmsg "getRoomToken <Roomname>" ; exit 1 ; fi
+	roomname=$1
+
+	[[ "$MYSQL_IN_CONTAINER" == "no" ]] && DOCKER_EXEC=""
+
+	COMMAND="$DOCKER_EXEC ${MYSQL} -e \"select name,token from oc_talk_rooms where name = '$roomname';\" | grep \"$roomname\" | sed \"s/\\t/|/g\""
+        SQLresult=$(eval $COMMAND)
+#	SQLresult=$(\
+#		      $DOCKER exec -i ${MYSQL_CONTAINER} \
+#		      mysql -U $MYSQL_DB -u$MYSQL_USER -p$MYSQL_DBPASS \
+#		-e "select name,token from oc_talk_rooms where name = \"$roomname\";" \
+#		| grep "$roomname" | sed "s/\t/|/g" )
+	token=$(echo $SQLresult | cut -d"|" -f2)
+	if [[ "x$token" != "x" ]]
+	then
+		echo $token
+	      debugmsg "Token $token zurückgegeben - end"
+		return 0
+	else
+	      debugmsg "Kein Token gefunden - end"
+		return 1
+	fi
+}
+
+createRoom() {
+	debugmsg start
+	APIBASE="/ocs/v2.php/apps/spreed/api/v4"
+	ENDPOINT=/room
+	METHOD=POST
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+	ROOMNAME="$1"
+
+	debugmsg "prüfen, ob Raum schon existiert"
+
+	TOKEN=$(getRoomToken $ROOMNAME)
+
+	debugmsg "gefundenes Token: $TOKEN"
+
+	if [[ "x$TOKEN" == "x" ]]   # wenn kein Token vorhanden...
+	then	                      # Gruppenraum anlegen:
+	      DATA='{ "roomType": 2, "roomName": "'$ROOMNAME'"}'
+
+	      debugmsg "Rufe API auf für Raum $ROOMNAME"
+
+	      RESPONSE=$($CURL -s -u "$NCUSER":"$NCTOKEN" \
+	      		 -X "$METHOD" "${APICALL}" \
+	      		 -H "OCS-APIRequest: true" \
+	      		 -H "Content-Type: application/json" \
+	      		 -H "Accept: application/json" \
+	      		 -d "$DATA")
+
+	      debugmsg "Antwort: RESPONSE"
+	      
+	      TOKEN=$(echo $RESPONSE | jq '.ocs.data.token' | tr -d '"')
+	      # Token zurückgeben
+	      debugmsg "Token: $TOKEN"
+	fi
+	echo $TOKEN
+	STATUS=$(echo $RESPONSE | jq '.ocs.meta.status' | tr -d '"')
+	debugmsg "Token $TOKEN zurückgegeben -  end"
+	[[ "X$STATUS" == "Xok" ]] && return 0 || return 1
+}
+
+setRoomDescription() {
+	debugmsg start
+	# usage setRoomDescription <ROOMNAME> "<DESCRIPTION>"
+	TOKEN=$(getRoomToken $1)
+	if [[ "x$TOKEN" == "x" ]] 
+	then 
+		return 1
+	fi
+	DESCRIPTION=$2
+	APIBASE="/ocs/v2.php/apps/spreed/api/v4"
+	ENDPOINT=/room/$TOKEN/description
+	METHOD=PUT
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+
+	debugmsg "Rufe API auf für Raum $1 - Descr: $DESCRIPTION"
+
+	DATA='{ "description": "'$DESCRIPTION'" }'
+	RESPONSE=$(curl -s -u "$NCUSER":"$NCTOKEN" -X "$METHOD" "${APICALL}" \
+			-H "OCS-APIRequest: true" \
+			-H "Content-Type: application/json" \
+			-H "Accept: application/json" \
+			-d "$DATA")
+	STATUS=$(echo $RESPONSE | jq '.ocs.meta.status' | tr -d '"')
+	debugmsg end
+	[[ "X$STATUS" == "Xok" ]] && return 0 || return 1
+}
+
+renameRoom() {
+	debugmsg start
+	# usage renameRoom <OLDNAME> <NEWNAME>
+	TOKEN=$(getRoomToken $1)
+	if [[ "x$TOKEN" == "x" ]] 
+	then 
+		return 1
+	fi
+	NEWNAME=$2
+	APIBASE="/ocs/v2.php/apps/spreed/api/v4"
+	ENDPOINT=/room/$TOKEN
+	METHOD=PUT
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+
+	debugmsg "Rufe API auf für Raum $1 - Descr: $DESCRIPTION"
+
+	DATA='{ "roomName": "'$NEWNAME'" }'
+	RESPONSE=$(curl -s -u "$NCUSER":"$NCTOKEN" -X "$METHOD" "${APICALL}" \
+			-H "OCS-APIRequest: true" \
+			-H "Content-Type: application/json" \
+			-H "Accept: application/json" \
+			-d "$DATA")
+	STATUS=$(echo $RESPONSE | jq '.ocs.meta.status' | tr -d '"')
+	debugmsg end
+	[[ "X$STATUS" == "Xok" ]] && return 0 || return 1
+}
+
+deleteRoom() {
+	debugmsg start 
+	# usage: deleteRoom <ROOMNAME>
+	APIBASE="/ocs/v2.php/apps/spreed/api/v4"
+	ENDPOINT=/room
+	METHOD=DELETE
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+	ROOMNAME="$1"
+	TOKEN=$(getRoomToken $ROOMNAME)
+	debugmsg "Rufe API auf, um Raum $ROOMNAME mit Token $TOKEN zu löschen"
+	[[ "x$TOKEN" == "x" ]] && return 1
+	RESPONSE=$($CURL -s -u "$NCUSER":"$NCTOKEN" \
+			 -X "$METHOD" "${APICALL}/${TOKEN}" \
+			 -H "OCS-APIRequest: true" \
+			 -H "Content-Type: application/json" \
+			 -H "Accept: application/json" )
+	STATUS=$(echo $RESPONSE | jq '.ocs.meta.status' | tr -d '"')
+	debugmsg end with Status $STATUS
+	[[ "X$STATUS" == "Xok" ]] && return 0 || return 1
+}
+getInternalGroupName() {
+	debugmsg start
+	# usage: getInternalGroupName <GROUP>
+	# versucht, den internen Namen zu erraten, der entstehen kann, wenn die Synchronisation der LDAP-Gruppen in der Vergangenheit mal schiefgelaufen ist.
+        GROUPID=$1
+	APIBASE="/ocs/v1.php"
+        METHOD=GET
+        for GROUP in ${GROUPID} ${GROUPID}_2 ${GROUPID}_3 ${GROUPID}_4 
+		do
+			ENDPOINT=/cloud/groups/$GROUP
+			APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+			debugmsg "Versuche API-Aufruf für Gruppe $GROUP"
+		RESPONSE=$(curl -s -u "$NCUSER":"$NCTOKEN" \
+				  -X "$METHOD" "${APICALL}" \
+				  -H "OCS-APIRequest: true" \
+				  -H "Content-Type: application/json" \
+				  -H "Accept: application/json" )
+		STATUS="$(echo $RESPONSE|jq '.ocs.meta.status'|tr -d '"')"
+		debugmsg "$RESPONSE"
+
+		if [[ "x$STATUS" == "xok" ]] ; then
+			echo "$GROUP"
+			debugmsg "AD-Gruppe $GROUPID ist nextcloudintern $GROUP"
+			return 0
+		fi
+        done
+
+	debugmsg "AD-Gruppe $GROUPID ist in Nextcloud nicht zu finden"
+	return 1
+}
+
+addGroup() {
+	debugmsg start
+	# usage: addGroup <ROOMNAME> <GROUP>
+	# der Raum wird angelegt, falls er noch nicht existiert!
+	ROOMNAME=$1
+	GROUPTOADD=$(getInternalGroupName $2)
+	APIBASE="/ocs/v2.php/apps/spreed/api/v4"
+	debugmsg Hole Raum-Token von $ROOMNAME, um $GROUPTOADD hinzuzufügen
+	ROOMTOKEN=$(createRoom $ROOMNAME)
+	debugmsg Token: $ROOMTOKEN
+	ENDPOINT=/room/$ROOMTOKEN/participants
+	METHOD=POST
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+	DATA='{ "newParticipant": "'$GROUPTOADD'", "source": "groups"}'
+	debugmsg Rufe API auf, um $GROUPTOADD hinzuzufügen
+	RESPONSE=$(curl -s -u "$NCUSER":"$NCTOKEN" \
+			-X "$METHOD" "${APICALL}" \
+			-H "OCS-APIRequest: true" \
+			-H "Content-Type: application/json" \
+			-H "Accept: application/json" \
+			-d "$DATA")
+	STATUS="$(echo $RESPONSE|jq '.ocs.meta.status'|tr -d '"')"
+	debugmsg $STATUS - end
+	[[ "x$STATUS" == "xok" ]] && return 0
+
+	debugmsg "Etwas ist schief gelaufen: $STATUS"
+	return 1
+} 
+
+addUser() {
+	debugmsg start
+	# usage: addUser <ROOMNAME> <USER>
+	# der Raum wird angelegt, falls er noch nicht existiert!
+	ROOMNAME=$1
+	USERTOADD=$2
+	APIBASE="/ocs/v2.php/apps/spreed/api/v4"
+	ROOMTOKEN=$(createRoom $ROOMNAME)
+	ENDPOINT=/room/$ROOMTOKEN/participants
+	METHOD=POST
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+
+	DATA='{ "newParticipant": "'$USERTOADD'", "source": "users"}'
+	RESPONSE=$(curl -s -u "$NCUSER":"$NCTOKEN" \
+				-X "$METHOD" "${APICALL}" \
+				-H "OCS-APIRequest: true" \
+				-H "Content-Type: application/json" \
+				-H "Accept: application/json" \
+				-d "$DATA")
+	STATUS="$(echo $RESPONSE|jq '.ocs.meta.status'|tr -d '"')"
+	debugmsg end
+	[[ "x$STATUS" == "xok" ]] && return 0
+
+	echo "Etwas ist schief gelaufen: $STATUS"
+	return 1
+} 
+
+
+addGroupOnlyWithRole() {
+	debugmsg start
+	# usage: addGroupOnlyWithRole <ROOMNAME> <GROUPID> <ROLE>
+	# ROLE kann "TEACHER" sein oder egal was anderes, dann ist es STUDENT
+	ROOMNAME=$1
+	GROUPID=$(getInternalGroupName $2)
+	ROLE="$3"
+	debugmsg Raum: $ROOMNAME, Gruppe: $GROUPID, Rolle: $ROLE
+	for USERTOADD in $(getGroupMembers $GROUPID)
+	do
+		[[ "x$ROLE" == "xTEACHERS" ]] && userIsTeacher $USERTOADD && addUser $ROOMNAME $USERTOADD
+		[[ "x$ROLE" == "xTEACHERS" ]] || userIsTeacher $USERTOADD || addUser $ROOMNAME $USERTOADD
+   	done
+	showUsers $ROOMNAME
+	debugmsg end
+}
+
+addGroupWithoutTeachers() {
+	debugmsg start
+	# usage: addGroupWithoutTeachers <ROOMNAME> <GROUPID>
+	debugmsg sicherstellen, dass Raum $1 existiert
+        TOKEN=$(createRoom $1)
+        debugmsg Raum hat Token $TOKEN	
+        addGroupOnlyWithRole $1 $2 STUDENTS
+	debugmsg end
+}
+
+addGroupOnlyTeachers() {
+	debugmsg start
+	# usage: aaddGroupOnlyTeachers <ROOMNAME> <GROUPID>
+        debugmsg sicherstellen, dass Raum $1 existiert
+        TOKEN=$(createRoom $1)
+        debugmsg Raum hat Token $TOKEN
+
+        addGroupOnlyWithRole $1 $2 TEACHERS
+	debugmsg end
+}
+
+deleteGroupmembersWithRole() {
+	debugmsg start
+	# usage: deleteGroupmembersWithRole <ROOMNAME> <GROUPID> <ROLE>
+	# ROLE kann "TEACHER" sein oder egal was anderes, dann ist es STUDENT
+	ROOMNAME=$1
+	GROUPID=$(getInternalGroupName $2)
+	ROLE="$3"
+	for USERTOREMOVE in $(getGroupMembers $GROUPID)
+	do
+		[[ "x$ROLE" == "xTEACHERS" ]] && userIsTeacher $USERTOREMOVE && removeUser $ROOMNAME $USERTOREMOVE
+		[[ "x$ROLE" == "xTEACHERS" ]] || userIsTeacher $USERTOREMOVE || removeUser $ROOMNAME $USERTOREMOVE
+   	done
+	showUsers $ROOMNAME
+	debugmsg end
+}
+
+getAttendeeId() {
+	debugmsg start
+	# usage: getAttendeeId <ROOMNAME> <USERID>
+
+	ROOMNAME=$1
+	USERID=$2
+	APIBASE="/ocs/v2.php/apps/spreed/api/v4"
+
+	ROOMTOKEN=$(getRoomToken $ROOMNAME)
+	ENDPOINT=/room/$ROOMTOKEN/participants
+	METHOD=GET
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+
+	DATA='{ "includeStatus": true }'
+	RESPONSE=$(curl -s -u "$NCUSER":"$NCTOKEN" \
+			-X "$METHOD" "${APICALL}" \
+			-H "OCS-APIRequest: true" \
+			-H "Content-Type: application/json" \
+			-H "Accept: application/json" \
+			-d "$DATA")
+	ATTENDEE=$(echo $RESPONSE | jq '.ocs.data[] | select(.actorId == "'$USERID'") | .attendeeId')
+	[[ "x$ATTENDEE" == "x" ]] && return 1
+	echo $ATTENDEE
+	debugmsg end
+} 
+
+showUsers() {
+	debugmsg start
+	# usage: showUsers <ROOMNAME>
+
+	ROOMNAME=$1
+	APIBASE="/ocs/v2.php/apps/spreed/api/v4"
+	ROOMTOKEN=$(getRoomToken $ROOMNAME)
+	if [[ "x$ROOMTOKEN" == "x" ]]
+	then 
+		debugmsg ERROR - Raum $ROOMNAME nicht gefunden - end
+		return 1
+	fi
+	ENDPOINT=/room/$ROOMTOKEN/participants
+	METHOD=GET
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+	debugmsg Starte API-Abfrage für Raum: $ROOMNAME, Token $ROOMTOKEN.
+
+	DATA='{ "includeStatus": false }'
+	RESPONSE=$(curl -s -u "$NCUSER":"$NCTOKEN" \
+			-X "$METHOD" "${APICALL}" \
+			-H "OCS-APIRequest: true" \
+			-H "Content-Type: application/json" \
+			-H "Accept: application/json" \
+			-d "$DATA")
+	echo $RESPONSE | jq '.ocs.data[] | select(.actorType == "users") | .actorId' | tr -d '"'
+	debugmsg $RESPONSE
+	debugmsg end
+} 
+
+showModerators() {
+	debugmsg start
+	# usage: showModerators <ROOMNAME>
+
+	ROOMNAME=$1
+	APIBASE="/ocs/v2.php/apps/spreed/api/v4"
+
+	ROOMTOKEN=$(getRoomToken $ROOMNAME)
+	if [[ "x$ROOMTOKEN" == "x" ]]
+	then
+	    debugmsg ERROR - Raum $ROOMNAME nicht gefunden
+	    return 1
+	fi
+
+	ENDPOINT=/room/$ROOMTOKEN/participants
+	METHOD=GET
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+
+	DATA='{ "includeStatus": true }'
+	RESPONSE=$(curl -s -u "$NCUSER":"$NCTOKEN" \
+			  -X "$METHOD" "${APICALL}" \
+			  -H "OCS-APIRequest: true" \
+			  -H "Content-Type: application/json" \
+			  -H "Accept: application/json" \
+			  -d "$DATA")
+	echo $RESPONSE | jq '.ocs.data[] | select(.participantType == 2) | .actorId' | tr -d '"'
+	debugmsg end
+} 
+
+removeUser() {
+	debugmsg start
+	# usage: removeUser <ROOMNAME> <USER>
+	# der Raum wird angelegt, falls er noch nicht existiert!
+	ROOMNAME=$1
+	USERTOREMOVE=$(getAttendeeId $ROOMNAME $2)
+	APIBASE="/ocs/v2.php/apps/spreed/api/v4"
+
+	ROOMTOKEN=$(getRoomToken $ROOMNAME)
+	ENDPOINT=/room/$ROOMTOKEN/attendees
+	METHOD=DELETE
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+
+	DATA='{ "attendeeId": '$USERTOREMOVE'}'
+	RESPONSE=$(curl -s -u "$NCUSER":"$NCTOKEN" \
+			  -X "$METHOD" "${APICALL}" \
+			  -H "OCS-APIRequest: true" \
+			  -H "Content-Type: application/json" \
+			  -H "Accept: application/json" \
+			  -d "$DATA")
+	STATUS="$(echo $RESPONSE|jq '.ocs.meta.status'|tr -d '"')"
+	debugmsg end
+	[[ "x$STATUS" == "xok" ]] && return 0
+
+	echo "Etwas ist schief gelaufen: $STATUS"
+	return 1
+} 
+
+promoteUser() {
+	debugmsg start
+	# usage: promoteUser <ROOMNAME> <USER>
+
+	ROOMNAME=$1
+	USERTOPROMOTE=$(getAttendeeId $ROOMNAME $2)
+	APIBASE="/ocs/v2.php/apps/spreed/api/v4"
+
+	ROOMTOKEN=$(getRoomToken $ROOMNAME)
+	ENDPOINT=/room/$ROOMTOKEN/moderators
+	METHOD=POST
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+
+	DATA='{ "attendeeId": "'$USERTOPROMOTE'" }'
+	RESPONSE=$(curl -s -u "$NCUSER":"$NCTOKEN" \
+			  -X "$METHOD" "${APICALL}" \
+			  -H "OCS-APIRequest: true" \
+			  -H "Content-Type: application/json" \
+			  -H "Accept: application/json" \
+			  -d "$DATA")
+	STATUS="$(echo $RESPONSE|jq '.ocs.meta.status'|tr -d '"')"
+	debugmsg end
+	[[ "x$STATUS" == "xok" ]] && return 0
+
+	echo "Etwas ist schief gelaufen: $STATUS:"
+	echo $RESPONSE | jq
+	return 1
+} 
+
+demoteUser() {
+	debugmsg start
+	# usage: demoteUser <ROOMNAME> <USER>
+
+	ROOMNAME=$1
+	USERTOPROMOTE=$(getAttendeeId $ROOMNAME $2)
+	APIBASE="/ocs/v2.php/apps/spreed/api/v4"
+
+	ROOMTOKEN=$(getRoomToken $ROOMNAME)
+	ENDPOINT=/room/$ROOMTOKEN/moderators
+	METHOD=DELETE
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+
+	DATA='{ "attendeeId": "'$USERTOPROMOTE'" }'
+	RESPONSE=$(curl -s -u "$NCUSER":"$NCTOKEN" \
+			  -X "$METHOD" "${APICALL}" \
+			  -H "OCS-APIRequest: true" \
+			  -H "Content-Type: application/json" \
+			  -H "Accept: application/json" \
+			  -d "$DATA")
+	STATUS="$(echo $RESPONSE|jq '.ocs.meta.status'|tr -d '"')"
+	debugmsg end
+	[[ "x$STATUS" == "xok" ]] && return 0
+
+	echo "Etwas ist schief gelaufen: $STATUS:"
+	echo $RESPONSE | jq
+	return 1
+} 
+
+getGroupMembers() {
+	debugmsg start
+	# usage: getGroupMembers <groupID>
+	GROUPID=$(getInternalGroupName $1)
+	APIBASE="/ocs/v1.php"
+	ENDPOINT=/cloud/groups/$GROUPID
+	METHOD=GET
+	APICALL="${NCURL}${APIBASE}${ENDPOINT}"
+	debugmsg "rufe API auf für Gruppe $GROUPID"
+	RESPONSE=$(curl -s -u "$NCUSER":"$NCTOKEN" \
+			  -X "$METHOD" "${APICALL}" \
+			  -H "OCS-APIRequest: true" \
+			  -H "Content-Type: application/json" \
+			  -H "Accept: application/json" )
+	STATUS="$(echo $RESPONSE|jq '.ocs.meta.status'|tr -d '"')"
+        if [[ "x$STATUS" != "xok" ]] ; then 
+		debugmsg "Es ist etwas schief gelaufen:" ; 
+		debugmsg "RESPONSE: $RESPONSE"
+	        return 1
+	fi
+	echo $RESPONSE|jq '.ocs.data.users[]' | tr -d '"'
+d	debugmsg "Antwort: $RESPONSE"
+	debugmsg end
+	[[ "x$STATUS" == "xok" ]] && return 0
+}
+
+syncUsers() {
+	debugmsg start
+	# usage: syncUsers <ROOMNAME> <groupID>
+	# entfernt Nutzer aus dem Raum, die nicht mehr in der Gruppe sind und
+	# fügt Nutzer hinzu, die neu in die Gruppe gekommen sind.
+	ROOMNAME=$1
+	GROUPID=$(getInternalGroupName $2)
+
+	# Definieren der beiden Listen
+	GROUPMEMBERS=($(getGroupMembers $GROUPID))
+	ROOMMEMBERS=($(showUsers $ROOMNAME))
+
+	# Sortieren der Listen
+	sorted_GROUPMEMBERS=($(echo "${GROUPMEMBERS[@]}" | tr ' ' '\n' | sort))
+	sorted_ROOMMEMBERS=($(echo "${ROOMMEMBERS[@]}" | tr ' ' '\n' | grep -v talkmaster | sort))
+
+	# Finden der Elemente nur in Nutzergruppe
+	only_GROUPMEMBERS=($(comm -23 <(printf "%s\n" "${sorted_GROUPMEMBERS[@]}") <(printf "%s\n" "${sorted_ROOMMEMBERS[@]}")))
+
+	# Finden der Elemente nur in Chatraum
+	only_ROOMMEMBERS=($(comm -13 <(printf "%s\n" "${sorted_GROUPMEMBERS[@]}") <(printf "%s\n" "${sorted_ROOMMEMBERS[@]}")))
+
+	# Ausgabe der Elemente nur in Nutzergruppe
+	for TOADD in ${only_GROUPMEMBERS[@]}
+	do
+		 addUser $ROOMNAME $TOADD
+	done
+
+	# Ausgabe der Elemente nur in Chatraum
+	for TOREMOVE in ${only_ROOMMEMBERS[@]}
+	do
+		removeUser $ROOMNAME $TOREMOVE
+	done
+	debugmsg end
+}

@@ -1,0 +1,133 @@
+#!/bin/bash
+DEBUG="0" # hier nicht konfigurieren, sondern in api-calls.config
+source ./api-calls
+# get options
+
+while getopts 'a:c:n:u:m:t:' OPT; do
+  case $OPT in
+    a) action=$OPTARG;;
+    n) roomname="$OPTARG";;
+    m) membergroup=$OPTARG;;
+    t) membertype=$OPTARG;;
+    u) user=$OPTARG;;
+    c) chefs=$OPTARG ; [[ "x$chefs" == "xnone" ]] && chefs="";;
+    *) unknown="yes";;
+  esac
+done
+
+debugmsg a: $action
+debugmsg n: $roomname
+debugmsg m: $membergroup
+debugmsg t: $membertype
+debugmsg u: $user  
+debugmsg c: $chefs
+
+
+
+# usage
+HELP="
+    usage: $0 -a <action> -n <roomName> [-m <membergroup>] [-t <schueler|lehrer|alle>] [-c comma,seperated,list,of,moderators]
+    action:
+        create:
+            Chatraum erzeugen und Schüler/Lehrer/Alle aus einer Gruppe einschreiben. Ggf. Moderatoren festlegen.
+	    Pflichtparameter: 
+	      -n <Chatraumname>
+	      -m <Gruppe>
+	      -t <schueler|lehrer|alle> 
+	    Optional: 
+	      -c comma,seperated,list,of,moderators>
+
+        deleteRoom:
+            !!!! Löscht den angegeben Raum OHNE NACHFRAGE und damit alle Nachrichten, die da drin waren.
+	    Pflichtparameter:
+	      -n <Chatraumname>
+
+	add-talkmaster:
+	    Setzt in einem Raum den talkmaster als Eigentümer. Praktisch bei schon existierenden Gruppen aus vor-API-Zeiten :)
+	    Pflichtparameter:
+	      -n <Chatraumname>
+"
+
+##############################################################################
+####  Funktionen definieren: #################################################
+##############################################################################
+
+
+promoteFromAdminlist(){
+        ADMINLIST="$1"
+        if [[ "x$ADMINLIST" != "x" ]]
+        then
+            IFS=',' read -r -a ADMINS <<< "$ADMINLIST"
+            for ADMIN in ${ADMINS[@]}
+                do
+			export ADMIN
+			CURRENTUSERS=$(showUsers $roomname)
+			CURRENTADMINS=$(showModerators $roomname)
+			if [[ "x$ADMIN" != "x" ]] && ! [[ $CURRENTADMINS =~ $ADMIN ]] && [[ $CURRENTUSERS =~ $ADMIN ]]
+                        then
+                                debugmsg "Promoting $ADMIN to Chat-Admin for $roomname"
+                                promoteUser $roomname $ADMIN
+			else 
+				debugmsg "$ADMIN ist schon Moderator oder nicht Teilnehmer im Raum... skippe promotion"
+				continue
+                        fi
+                done
+        else
+                debugmsg "No Admins given for Room $ROOM - skipping promotion"
+        fi
+
+}
+
+addTalkmaster(){
+  # der API-Nutzer muss in Räumen Mitglied sein, damit er sie bearbeiten darf. Für den Fall, dass ein Raum schon exisitiert, 
+  # kann man als www-data über occ auf der Konsole den User nachträglich hinzufügen und zum Owner erklären
+  token=$(getRoomToken $roomname) || exit 1 # wenn es diesen Raum nicht gibt, einfach aufhören...
+  if [[ "x$(showUsers $roomname)" =~ "talkmaster" ]]
+	then
+		echo "talkmaster ist schon Member"
+		exit 0
+	else
+		echo "Adding talkmaster as channelowner for $roomname (Token $token)"
+		OCC="docker exec --user www-data ${NC_CONTAINER} php occ"
+		[[ "$NC_IN_CONTAINER" == "no" ]] && OCC=$OCC_OHNE_DOCKER
+
+		COMMAND="$OCC talk:room:add --user talkmaster $token && $OCC talk:room:update --owner talkmaster $token"
+		eval $COMMAND
+        fi
+
+}
+
+
+##############################################################################
+############### Entscheide, welche Aktion ausgeführt wird ####################
+##############################################################################
+
+case $action in 
+        "create") debugmsg a:create, t:$membertype, m:$membergroup, r:$roomname 
+		  if [[ "x$membertype" == "xlehrer" ]] ; then
+			 debugmsg Nur Lehrer anlegen
+		     	 addGroupOnlyTeachers $roomname $membergroup 
+		  elif [[ "x$membertype" == "xschueler" ]] ; then
+			  debugmsg Nur Schüler anlegen
+			addGroupWithoutTeachers $roomname $membergroup
+		  elif [[ "x$membertype" == "xalle" ]] ; then
+			  debugmsg Alle anlegen
+		  	  addGroup $roomname $membergroup
+		  else
+			  debugmsg membertype muss angegeben werden.
+		  fi
+		  debugmsg Promoten von $chefs
+		  promoteFromAdminlist $chefs
+		  debugmsg create abgeschlossen
+		;; 
+	"add-talkmaster") 
+		debugmsg a:add-talkmaster 
+		addTalkmaster ;;
+	"deleteRoom") 
+		debugmsg a: deleteRoom $roomaname
+		deleteRoom $roomname ;; 
+	 *) echo "$HELP" ;;
+esac
+
+
+
