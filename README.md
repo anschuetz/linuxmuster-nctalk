@@ -5,6 +5,14 @@ Nutzung von Nextcloud-Talk in Verbindung mit linuxmuster.net als Schulmessenger.
 - Einen API-Nutzer mit Admin-Rechten
 - Eine Linuxmuster.net-Installation
 
+## Nutzung
+- `cd opt`
+- `git clone https://github.com/anschuetz/linuxmuster-nctalk`
+- `cd linuxmuster-nctalk`
+- `cp api-calls.config-dist api-calls.config`
+- Anpassen der Konfiguration 
+- Erzeugen der Fachschaftsraum-Definition & Anpassung
+- Anpassen der Chatraum-Definitionsdateien
 
 
 
