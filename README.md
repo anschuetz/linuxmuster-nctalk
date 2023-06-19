@@ -6,9 +6,10 @@ Nutzung von Nextcloud-Talk in Verbindung mit linuxmuster.net als Schulmessenger.
 - Eine Linuxmuster.net-Installation
 
 ## Nutzung
-- `cd opt`
+- `cd /opt`  (oder einen anderen gewünschten Ort)
 - `git clone https://github.com/anschuetz/linuxmuster-nctalk`
 - `cd linuxmuster-nctalk`
+- Hinzufügen von `/opt/linuxmuster-nctalk` zum Pfad (in /etc/environment)
 - `cp api-calls.config-dist api-calls.config`
 - Anpassen der Konfiguration 
 - Erzeugen der Fachschaftsraum-Definition & Anpassung
