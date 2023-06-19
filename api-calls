@@ -11,8 +11,22 @@ CURL="/usr/bin/curl"
 TEACHERS="leer"
 [ -z "$DEBUG" ] && DEBUG=0
 [ -z "$NCTEACHERSGROUPID" ] && NCTEACHERSGROUPID=teachers
+
+red() {
+echo -e "\e[31m$@\e[0m"
+}
+green() {
+echo -e "\e[32m$@\e[0m"
+}
+
 debugmsg() {
 	[ $DEBUG = 0 ] && return 0
+	DEBUGSTRING="$@"
+	# erstes "Wort" ist eine 1 --> rot
+	[[ "x$1" == "x1" ]] && DEBUGSTRING=$(red $(echo $DEBUGSTRING | cut -d" " -f2-))
+	# erstes "Wort" ist eine 0 --> grün
+	[[ "x$1" == "x0" ]] && DEBUGSTRING=$(green $(echo $DEBUGSTRING | cut -d" " -f2-)) 
+
 	if [ $DEBUG = 2 ] ; then echo -n "." ; return 0 ; fi
 	
 	if [ -n "$BASH_VERSION" ]; then
@@ -30,9 +44,9 @@ debugmsg() {
 	else 
 		TAB="\t" 
 	fi
-	echo -e "$DATUM: $FUNCTIONSTACK $TAB $@"  >&2
+	echo -e "$DATUM: $FUNCTIONSTACK $TAB $DEBUGSTRING"  >&2
 }
-debugmsg Debugging ist eingeschaltet
+debugmsg 0 Debugging ist eingeschaltet
 
 userExists() {
 	debugmsg start
@@ -47,10 +61,10 @@ userExists() {
 	      	   -H "Accept: application/json")
 	if echo ${RESPONSE}|tr -d '\n\t\r' | jq '.ocs.data.id' >/dev/null 2>&1  
 	then
-	        debugmsg end
+	        debugmsg 0 end
 	        return 0 
 	else
-	        debugmsg end
+	        debugmsg 1 end
 	        return 1
 	fi
 }
@@ -91,16 +105,11 @@ getRoomToken() {
 
 	COMMAND="$DOCKER_EXEC ${MYSQL} -e \"select name,token from oc_talk_rooms where name = '$roomname';\" | grep \"$roomname\" | sed \"s/\\t/|/g\""
         SQLresult=$(eval $COMMAND)
-#	SQLresult=$(\
-#		      $DOCKER exec -i ${MYSQL_CONTAINER} \
-#		      mysql -U $MYSQL_DB -u$MYSQL_USER -p$MYSQL_DBPASS \
-#		-e "select name,token from oc_talk_rooms where name = \"$roomname\";" \
-#		| grep "$roomname" | sed "s/\t/|/g" )
 	token=$(echo $SQLresult | cut -d"|" -f2)
 	if [[ "x$token" != "x" ]]
 	then
 		echo $token
-	      debugmsg "Token $token zurückgegeben - end"
+	      debugmsg 0 "Token $token zurückgegeben - end"
 		return 0
 	else
 	      debugmsg "Kein Token gefunden - end"
@@ -170,8 +179,15 @@ setRoomDescription() {
 			-H "Accept: application/json" \
 			-d "$DATA")
 	STATUS=$(echo $RESPONSE | jq '.ocs.meta.status' | tr -d '"')
-	debugmsg end
-	[[ "X$STATUS" == "Xok" ]] && return 0 || return 1
+	debugmsg "end"
+	if [[ "X$STATUS" == "Xok" ]] 
+	then
+		debugmsg 0 end 
+		return 0
+	else    
+		debugmsg 1 $STATUS - end 
+		return 1
+	fi
 }
 
 renameRoom() {
@@ -180,6 +196,7 @@ renameRoom() {
 	TOKEN=$(getRoomToken $1)
 	if [[ "x$TOKEN" == "x" ]] 
 	then 
+		debugmsg 1 Raum $1 gibts gar nicht
 		return 1
 	fi
 	NEWNAME=$2
@@ -198,7 +215,14 @@ renameRoom() {
 			-d "$DATA")
 	STATUS=$(echo $RESPONSE | jq '.ocs.meta.status' | tr -d '"')
 	debugmsg end
-	[[ "X$STATUS" == "Xok" ]] && return 0 || return 1
+	if [[ "X$STATUS" == "Xok" ]] 
+	then
+		debugmsg 0 end 
+		return 0
+	else    
+		debugmsg 1 $STATUS - end 
+		return 1
+	fi
 }
 
 deleteRoom() {
@@ -218,8 +242,14 @@ deleteRoom() {
 			 -H "Content-Type: application/json" \
 			 -H "Accept: application/json" )
 	STATUS=$(echo $RESPONSE | jq '.ocs.meta.status' | tr -d '"')
-	debugmsg end with Status $STATUS
-	[[ "X$STATUS" == "Xok" ]] && return 0 || return 1
+	if [[ "X$STATUS" == "Xok" ]]
+        then
+                debugmsg 0 end
+                return 0
+        else
+                debugmsg 1 $STATUS - end
+                return 1
+        fi
 }
 getInternalGroupName() {
 	debugmsg start
@@ -243,12 +273,12 @@ getInternalGroupName() {
 
 		if [[ "x$STATUS" == "xok" ]] ; then
 			echo "$GROUP"
-			debugmsg "AD-Gruppe $GROUPID ist nextcloudintern $GROUP"
+			debugmsg 0 "AD-Gruppe $GROUPID ist nextcloudintern $GROUP"
 			return 0
 		fi
         done
 
-	debugmsg "AD-Gruppe $GROUPID ist in Nextcloud nicht zu finden"
+	debugmsg 1 "AD-Gruppe $GROUPID ist in Nextcloud nicht zu finden"
 	return 1
 }
 
@@ -274,11 +304,14 @@ addGroup() {
 			-H "Accept: application/json" \
 			-d "$DATA")
 	STATUS="$(echo $RESPONSE|jq '.ocs.meta.status'|tr -d '"')"
-	debugmsg $STATUS - end
-	[[ "x$STATUS" == "xok" ]] && return 0
-
-	debugmsg "Etwas ist schief gelaufen: $STATUS"
-	return 1
+	if [[ "X$STATUS" == "Xok" ]]
+        then
+                debugmsg 0 end
+                return 0
+        else
+	        debugmsg 1 "Etwas ist schief gelaufen: $STATUS - end"
+                return 1
+        fi
 } 
 
 addUser() {
@@ -302,10 +335,14 @@ addUser() {
 				-d "$DATA")
 	STATUS="$(echo $RESPONSE|jq '.ocs.meta.status'|tr -d '"')"
 	debugmsg end
-	[[ "x$STATUS" == "xok" ]] && return 0
-
-	echo "Etwas ist schief gelaufen: $STATUS"
-	return 1
+        if [[ "X$STATUS" == "Xok" ]]
+        then
+                debugmsg 0 end
+                return 0
+        else
+        	debugmsg 1 "Etwas ist schief gelaufen: $STATUS - end"
+                return 1
+        fi
 } 
 
 
@@ -428,7 +465,7 @@ showModerators() {
 	ROOMTOKEN=$(getRoomToken $ROOMNAME)
 	if [[ "x$ROOMTOKEN" == "x" ]]
 	then
-	    debugmsg ERROR - Raum $ROOMNAME nicht gefunden
+	    debugmsg 1 ERROR - Raum $ROOMNAME nicht gefunden
 	    return 1
 	fi
 
@@ -468,11 +505,14 @@ removeUser() {
 			  -H "Accept: application/json" \
 			  -d "$DATA")
 	STATUS="$(echo $RESPONSE|jq '.ocs.meta.status'|tr -d '"')"
-	debugmsg end
-	[[ "x$STATUS" == "xok" ]] && return 0
-
-	echo "Etwas ist schief gelaufen: $STATUS"
-	return 1
+        if [[ "X$STATUS" == "Xok" ]]
+        then
+                debugmsg 0 end
+                return 0
+        else
+	        debugmsg 1 "Etwas ist schief gelaufen: $STATUS - end"
+                return 1
+        fi
 } 
 
 promoteUser() {
@@ -496,14 +536,15 @@ promoteUser() {
 			  -H "Accept: application/json" \
 			  -d "$DATA")
 	STATUS="$(echo $RESPONSE|jq '.ocs.meta.status'|tr -d '"')"
-	debugmsg end
-	[[ "x$STATUS" == "xok" ]] && return 0
-
-	echo "Etwas ist schief gelaufen: $STATUS:"
-	echo $RESPONSE | jq
-	return 1
-} 
-
+        if [[ "X$STATUS" == "Xok" ]]
+        then
+                debugmsg 0 end
+                return 0
+        else
+	        debugmsg 1 "Etwas ist schief gelaufen: $STATUS - end"
+                return 1
+        fi
+}
 demoteUser() {
 	debugmsg start
 	# usage: demoteUser <ROOMNAME> <USER>
@@ -525,12 +566,14 @@ demoteUser() {
 			  -H "Accept: application/json" \
 			  -d "$DATA")
 	STATUS="$(echo $RESPONSE|jq '.ocs.meta.status'|tr -d '"')"
-	debugmsg end
-	[[ "x$STATUS" == "xok" ]] && return 0
-
-	echo "Etwas ist schief gelaufen: $STATUS:"
-	echo $RESPONSE | jq
-	return 1
+        if [[ "X$STATUS" == "Xok" ]]
+        then
+                debugmsg 0 end
+                return 0
+        else
+                debugmsg 1 "Etwas ist schief gelaufen: $STATUS - end"
+                return 1
+        fi
 } 
 
 getGroupMembers() {
@@ -554,7 +597,7 @@ getGroupMembers() {
 	        return 1
 	fi
 	echo $RESPONSE|jq '.ocs.data.users[]' | tr -d '"'
-d	debugmsg "Antwort: $RESPONSE"
+	debugmsg "Antwort: $RESPONSE"
 	debugmsg end
 	[[ "x$STATUS" == "xok" ]] && return 0
 }

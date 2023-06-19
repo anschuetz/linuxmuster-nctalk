@@ -4,30 +4,9 @@
 # um einen Durchlauf ohne die aufwändigen Fachschaften zu 
 # ermöglichen
 source api-calls.config
+source api-calls
 SKRIPTPATH="$(dirname $(realpath "$0"))"
-debugmsg() {
-	[ $DEBUG = 0 ] && return 0
-	if [ $DEBUG = 2 ] ; then echo -n "."  ; return 0 ; fi  
-	if [ -n "$BASH_VERSION" ]; then
-		FUNCTIONSTACK="${FUNCNAME[1]}"
-	elif [ -n "$ZSH_VERSION" ]; then
-		FUNCTIONSTACK="${funcstack[2]}"
-	else
-		FUNCTIONSTACK="Unbekannt"
-	fi
-
-	DATUM=$(date '+%Y-%m-%d %H:%M:%S')
-	TEXTLENGTH=${#FUNCTIONSTACK}
-	if [ ${TEXTLENGTH} -lt 10 ] ; then
-		TAB="\t\t"
-	else
-		TAB="\t"
-	fi
-	echo -e "$DATUM: $FUNCTIONSTACK $TAB $@"  >&2
-}
-debugmsg Debugging ist eingeschaltet
 debugmsg $SKRIPTPATH
-
 
 
 createFachschaften() {
