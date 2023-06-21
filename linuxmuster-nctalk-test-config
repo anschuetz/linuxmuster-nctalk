@@ -1,0 +1,50 @@
+#!/bin/bash
+################################################################################
+#linuxmuster-nctalk-test-config
+# Jesko Anschütz jesko@linuxmuster.net Juni 2023
+#
+# Skript testet, ob LDAP, MYSQL und API erreichbar sind.               
+################################################################################
+
+source ./api-calls 
+source ./api-calls.config
+
+testLDAP() {
+	ldapfilter="(&(objectClass=group)(!(sophomorixAdminClass=attic))(|(samaccountname=p_*)))"
+
+	PROJEKTE=$(/usr/bin/ldapsearch -x -H $LDAP_SERVER  \
+			'-b' $LDAP_BASEDN \
+			'-D' $LDAP_BDUSER \
+			'-w' $LDAP_BDPASS ${ldapfilter} \
+			| grep -i samaccountname | cut -d" " -f2 | wc -l) &&  echo "$PROJEKTE Projekte gefunden"
+	return $?
+}
+
+testOCC(){
+   OCC="docker exec --user www-data ${NC_CONTAINER} php occ"
+   [[ "$NC_IN_CONTAINER" == "no" ]] && OCC=$OCC_OHNE_DOCKER	
+   $OCC -V
+   return $?
+}
+
+if RESULT=$(testLDAP) 
+then
+	green "LDAP konnte abgefragt werden. ($RESULT)"
+else 
+	red "LDAP konnte nicht abgefragt werden ($RESULT)"
+fi
+
+if RESULT=$(userExists talkmaster) 
+then
+	green "API ist korrekt konfiguriert und User "talkmaster" existiert."
+else
+	red  "Es gibt ein Problem mit der API Konfiguration ($RESULT)"
+fi	
+
+
+if RESULT=$(testOCC)
+then
+	green "OCC funktioniert. ($RESULT)"
+else
+	red "Es gibt ein Problem mit der OCC-Konfiguration: $RESULT"
+fi
