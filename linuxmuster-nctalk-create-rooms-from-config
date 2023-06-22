@@ -1,8 +1,13 @@
 #!/bin/bash
-
-# Skript wird mit Parameter "update" oder "skipfs" aufgerufen
+#######################################################################
+### linuxmuster-nctalk - 2023 Jesko Anschütz <jesko@linuxmuster.net  ###
+### Schöpferische Höhe ist hier relativ gering,...                   ###
+### Lizenz: take it or not - use it or not - change it or not        ###
+########################################################################
+# Skript kann mit Parameter "skipfs" aufgerufen werden
 # um einen Durchlauf ohne die aufwändigen Fachschaften zu 
 # ermöglichen
+
 source api-calls.config
 source api-calls
 SKRIPTPATH="$(dirname $(realpath "$0"))"

@@ -1,4 +1,10 @@
 #!/bin/bash
+########################################################################
+### linuxmuster-nctalk - 2023 Jesko Anschütz <jesko@linuxmuster.net  ###
+### Schöpferische Höhe ist hier relativ gering,...                   ###
+### Lizenz: take it or not - use it or not - change it or not        ###
+########################################################################
+
 DEBUG="0" # hier nicht konfigurieren, sondern in api-calls.config
 source ./api-calls
 # get options
