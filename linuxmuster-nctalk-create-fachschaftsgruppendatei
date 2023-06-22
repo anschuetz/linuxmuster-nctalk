@@ -1,8 +1,12 @@
 #!/bin/bash
-################################################################################
-#linuxmuster-nctalk-create-fachschaftsgruppendatei
-# Jesko Anschütz jesko@linuxmuster.net Juni 2023
-#
+########################################################################
+# linuxmuster-nctalk-create-fachschaftsgruppendatei ####################    
+########################################################################
+### linuxmuster-nctalk - 2023 Jesko Anschütz <jesko@linuxmuster.net  ###
+### Schöpferische Höhe ist hier relativ gering,...                   ###
+### Lizenz: take it or not - use it or not - change it or not        ###
+########################################################################
+
 # Skript fragt AD nach Projekten ab, die mit p_fs beginnen und erzeugt
 # daraus eine Steuerdatei für das Skript "linuxmuster-nctalk-create-rooms-from-config"
 # 
